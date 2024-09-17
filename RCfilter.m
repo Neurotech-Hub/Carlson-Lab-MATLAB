@@ -1,7 +1,68 @@
-load('/Users/mattgaidica/Library/CloudStorage/Box-Box/EODs for Matt/070824_CN12_EOD_70ms.eod.mat');
-doSave = true;
+% Directory containing the .mat files
+directory = '/Users/gaidica/Library/CloudStorage/Box-Box/EODs for Matt';
 
-testNoise = true;
+% Get a list of all .mat files in the directory
+files = dir(fullfile(directory, '*.mat'));
+
+% Initialize a cell array to store all eod matrices temporarily
+eod_signals = {};
+
+% Loop over each file to load eod signals
+for k = 1:length(files)
+    % Construct the full file path
+    filepath = fullfile(directory, files(k).name);
+    
+    % Load the .mat file
+    data = load(filepath);
+    
+    % Check if the 'eod' variable exists in the loaded data
+    if isfield(data, 'eod')
+        eod_signals{end+1} = data.eod;  % Append eod matrix to the cell array
+    else
+        warning('Variable ''eod'' not found in %s', files(k).name);
+    end
+end
+
+% Determine the number of channels (should be 10)
+num_channels = size(eod_signals{1}, 1);
+
+% Find the maximum length (number of time points) across all eod signals
+max_length = max(cellfun(@(x) size(x, 2), eod_signals));
+
+% Initialize a matrix to hold all centered signals, padded with zeros
+compiled_eod = zeros(num_channels * length(eod_signals), max_length);
+
+% Index to keep track of where to place each 10-channel block
+row_idx = 1;
+
+% Center all signals within the maximum length (zero-pad both sides)
+for k = 1:length(eod_signals)
+    current_eod = eod_signals{k};
+    current_length = size(current_eod, 2);  % Length of the current signal
+    
+    % Calculate padding needed to center the signal
+    padding_left = floor((max_length - current_length) / 2);
+    padding_right = max_length - current_length - padding_left;
+    
+    % Place the centered signal in the appropriate rows and columns
+    compiled_eod(row_idx:row_idx+num_channels-1, (1+padding_left):(max_length-padding_right)) = current_eod;
+    
+    % Update row index for the next set of signals
+    row_idx = row_idx + num_channels;
+end
+
+% Display the size of the compiled eod data
+fprintf('Compiled eod size: %dx%d\n', size(compiled_eod));
+
+% Save the compiled eod data to a new .mat file
+save('compiled_eod_centered.mat', 'compiled_eod');
+
+eod = compiled_eod; % overwrite
+
+%%
+doSave = true;
+testNoise = false;
+
 if (testNoise)
     % high amplitude artifact
     eod(1,6000:6050) = 60;
@@ -38,7 +99,7 @@ figure('Position', [0, 0, 1200, 1200]);
 subplot(rows, cols, 1);  % Left subplot
 hold on;
 for i = 1:numSignals
-    plot(t, eod(i, :));
+    plot(t, normalize(eod(i, :)));
 end
 title('Time-Domain Signals');
 xlabel('Time (seconds)');
@@ -75,7 +136,7 @@ averagePeak = mean(peakFrequencies);
 title(sprintf('Smoothed Spectrums, Peak %.2f Hz',averagePeak));
 xlabel('Frequency (Hz)');
 ylabel('|P1(f)|');
-xlim([1, 200]);  % Adjust frequency range as needed
+xlim([1, 20000]);  % Adjust frequency range as needed
 grid on;
 xline(averagePeak,'r:','linewidth',2);
 hold off;
@@ -90,11 +151,11 @@ C2_value = 1e-8; % Chosen C2 value (1 uF)
 % Calculate R1, C1, R2, C2
 [R1, C1, R2, C2] = calculateRC(f0, BW, C1_value, C2_value);
 
-% Define the transfer function numerator and denominator
-num = [R2*C2 0];  % s*R2*C2 (numerator of transfer function)
-den = [R1*R2*C1*C2 (R1*C1 + R2*C2) 1];  % (sR2C2 + 1)(sR1C1 + 1)
+% Define the transfer function numerator and denominator for your specific circuit
+num = [C2 * R2 0];  % Numerator: C2 * R2 * s (s term for Laplace transform)
+den = [R1 * C1 * C2 * R2, (R1 * C1 + C2 * R2), 1];  % Denominator: (1 + R1C1s)(1 + C2R2s)
 
-% Sampling rate (from your data)
+% Sampling rate
 Ts = 1/srate;  % Sampling period
 
 % Convert the analog filter to digital using bilinear transformation
@@ -149,10 +210,9 @@ end
 title('Spectrum of Filtered Signals');
 xlabel('Frequency (Hz)');
 ylabel('|P1(f)|');
-xlim([1, 200]);  % Adjust frequency range as needed
+xlim([1, 20000]);  % Adjust frequency range as needed
 grid on;
 hold off;
-set(gcf,'color','w');
 
 if (doSave)
     exportgraphics(gcf,'RCfilter.jpg');
